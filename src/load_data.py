@@ -5,6 +5,7 @@ import random
 import requests
 import shutil
 from bs4 import BeautifulSoup
+from tqdm import tqdm
 from urllib.parse import urljoin, urlsplit
 
 base_url = 'https://www.khanacademy.org/'
@@ -17,9 +18,9 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_dir)
 data_dir = os.path.join(parent_dir, 'data')
 transcript_path= os.path.join(data_dir, 'transcripts')
+videos_per_subject = 50
 subjects = ['calculus-home', 'physics', 'chemistry', 'biology', 
             'us-history', 'computer-science', 'music', 'grammar']
-videos_per_subject = 1
 
 
 def get_json(url):
@@ -27,7 +28,7 @@ def get_json(url):
     return json.loads(page.content.decode('UTF-8'))
 
 
-def get_child_slugs(slug):
+def get_children(slug):
     slug_url = topic_api_url.format(slug)
     slug_json = get_json(slug_url)
     return [child['node_slug'] for child in slug_json['children']]
@@ -40,11 +41,16 @@ def get_video_youtube_id(slug):
 
 
 def get_videos(subject):
-    topic = random.choice(get_child_slugs(subject))
-    section = random.choice(get_child_slugs(topic))
-    content = get_child_slugs(section)
+    print('Loading topics...')
+    topics = get_children(subject)
+    print('Loading sections...')
+    sections = [slug for topic in tqdm(topics) 
+                for slug in get_children(topic)]
+    print('Loading content...')
+    content = [slug for section in tqdm(sections) 
+               for slug in get_children(section)]
     is_video = lambda c: c[0] == 'v'
-    return list(filter(is_video, content))
+    return list(set(filter(is_video, content)))
 
 
 def get_transcript(youtube_id):
@@ -62,17 +68,19 @@ except OSError:
 data = {}
 
 for subject in subjects:
-    subject_videos = []
-    while len(subject_videos) < videos_per_subject:
-        videos = get_videos(subject)
-        if len(videos) == 0:
-            continue
-        chosen_video = random.choice(videos)
-        subject_videos.append(chosen_video[2:])
-    for video in subject_videos:
-        youtube_id = get_video_youtube_id(video)
+    print('Loading videos for {}...'.format(subject))
+    all_videos = get_videos(subject)
+    while True:
+        subject_videos = random.sample(all_videos, videos_per_subject)
+        video_used = [text_format.format(video) in data.keys() 
+                      for video in subject_videos]
+        if not any(video_used):
+            break
+    for video in tqdm(subject_videos):
+        video_name = video[2:]
+        youtube_id = get_video_youtube_id(video_name)
         transcript = get_transcript(youtube_id)
-        video_fname = text_format.format(video)
+        video_fname = text_format.format(video_name)
         video_path = os.path.join(transcript_path, video_fname)
         with open(video_path, 'w') as f:
             f.write(transcript)
